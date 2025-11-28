@@ -3,42 +3,58 @@ import re
 import csv
 import gzip
 import argparse
+import locale
 from datetime import datetime
-from collections import Counter
+from collections import Counter, defaultdict
+
+# Set locale to parse month names in English, crucial for log date parsing
+try:
+    locale.setlocale(locale.LC_TIME, "en_US.UTF-8")
+except locale.Error:
+    print(
+        "Warning: Locale 'en_US.UTF-8' not available. Date parsing might fail if log month names are in English."
+    )
 
 LOG_PATH = "/var/log/nginx"
 
-# Regex para extraer método y endpoint
-request_regex = re.compile(r'"(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS) ([^ ]+)')
+# Regex to extract date, method, and endpoint from a standard Nginx log line
+log_data_regex = re.compile(
+    r'.*?\[(\d{2}/\w{3}/\d{4}):\d{2}:\d{2}:\d{2} .*?\] "'
+    r"(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS) ([^ ]+)"
+)
 
 
 def read_log_file(file_path):
-    """Lee logs normales y .gz"""
+    """Reads log files, including gzipped ones, line by line."""
     if file_path.endswith(".gz"):
         with gzip.open(file_path, "rt", errors="ignore") as f:
-            for line in f:
-                yield line
+            yield from f
     else:
         with open(file_path, "r", errors="ignore") as f:
-            for line in f:
-                yield line
+            yield from f
 
 
-def extract_endpoint(line):
-    """Extrae el endpoint y quita query params"""
-    match = request_regex.search(line)
+def extract_log_data(line):
+    """Extracts date and endpoint from a log line, returning a date object and a string."""
+    match = log_data_regex.match(line)
     if not match:
-        return None
+        return None, None
 
-    method, path = match.groups()
-    return path.split("?")[0]  # quitar parámetros
+    date_str, _, path = match.groups()
+    try:
+        date_obj = datetime.strptime(date_str, "%d/%b/%Y").date()
+    except ValueError:
+        return None, None  # Ignore lines with malformed dates
+
+    endpoint = path.split("?")[0]
+    return date_obj, endpoint
 
 
 def load_prefixes(routes_file):
-    """Carga prefijos desde un archivo de rutas"""
+    """Loads endpoint prefixes from the specified file."""
     prefixes = []
     if not os.path.exists(routes_file):
-        print(f"ERROR: No se encontró el archivo {routes_file}")
+        print(f"ERROR: Routes file not found at {routes_file}")
         exit(1)
 
     with open(routes_file, "r", encoding="utf-8") as f:
@@ -46,53 +62,74 @@ def load_prefixes(routes_file):
             clean = line.strip()
             if clean:
                 prefixes.append(clean)
-
     return prefixes
 
 
 def matches_prefix(endpoint, prefixes):
-    """Devuelve True si el endpoint empieza con alguno de los prefijos"""
+    """Checks if an endpoint matches any of the loaded prefixes."""
     return any(endpoint.startswith(pref) for pref in prefixes)
+
+
+def get_unique_dir(base_name, parent_dir="."):
+    """Creates a unique directory name by appending a suffix if the base name exists."""
+    counter = 1
+    # Prepend parent_dir to the base_name to ensure uniqueness within that parent
+    full_base_path = os.path.join(parent_dir, base_name)
+    dir_name = full_base_path
+    while os.path.exists(dir_name):
+        dir_name = f"{full_base_path}_{counter}"
+        counter += 1
+    return dir_name
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Analiza logs de Nginx y cuenta hits a endpoints específicos."
+        description="Analyzes Nginx logs and generates daily endpoint hit reports."
     )
     parser.add_argument(
         "--routes-file",
         default="./routes/main.txt",
-        help="Archivo con la lista de prefijos de rutas a auditar.",
+        help="File containing the list of endpoint prefixes to audit.",
     )
     args = parser.parse_args()
 
     prefixes = load_prefixes(args.routes_file)
-    counter = Counter()
+    daily_counters = defaultdict(Counter)
 
+    print("🔍 Processing log files...")
     for filename in sorted(os.listdir(LOG_PATH)):
         if filename.startswith("access.log"):
             full_path = os.path.join(LOG_PATH, filename)
-
             for line in read_log_file(full_path):
-                endpoint = extract_endpoint(line)
-                if endpoint and matches_prefix(endpoint, prefixes):
-                    counter[endpoint] += 1
+                log_date, endpoint = extract_log_data(line)
+                if log_date and endpoint and matches_prefix(endpoint, prefixes):
+                    daily_counters[log_date][endpoint] += 1
 
-    # Crear archivo con fecha
-    today = datetime.now().strftime("%Y-%m-%d")
-    output_filename = os.path.join("audits", f"auditoria_{today}.csv")  # Modified line
+    if not daily_counters:
+        print("No log entries found matching the specified criteria.")
+        return
 
-    # Ensure the 'audits' directory exists
-    os.makedirs("audits", exist_ok=True)  # Added line
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    routes_file_base = os.path.splitext(os.path.basename(args.routes_file))[0]
+    dir_base_name = f"auditoria_{routes_file_base}_{today_str}"
 
-    with open(output_filename, "w", encoding="utf-8", newline="") as file:
-        writer = csv.writer(file)
-        writer.writerow(["endpoint", "count"])
+    output_dir = get_unique_dir(dir_base_name, parent_dir="audits")
+    os.makedirs(output_dir)
+    print(f"📁 Report directory created: {output_dir}")
 
-        for endpoint, count in counter.most_common():
-            writer.writerow([endpoint, count])
+    for log_date, counter in sorted(daily_counters.items()):
+        date_str = log_date.strftime("%Y-%m-%d")
+        output_filename = os.path.join(output_dir, f"auditoria_{date_str}.csv")
 
-    print(f"\nReporte generado: {output_filename}\n")
+        with open(output_filename, "w", encoding="utf-8", newline="") as file:
+            writer = csv.writer(file)
+            writer.writerow(["endpoint", "count"])
+            for endpoint, count in counter.most_common():
+                writer.writerow([endpoint, count])
+
+        print(f"  -> Daily report generated: {output_filename}")
+
+    print("\n✅ Process completed successfully.")
 
 
 if __name__ == "__main__":

@@ -1,67 +1,100 @@
 import csv
 import argparse
+import re
 from collections import Counter
-from pathlib import Path
-
-OUTPUT_FILE = "agrupado.csv"
+import os
 
 
 def normalize_endpoint(endpoint: str) -> str:
     """
-    Devuelve el endpoint base sin el último segmento variable.
-    Ejemplo: /api/items_stock/06-98419 → /api/items_stock/
+    Returns the base endpoint without the last variable segment.
+    Example: /api/items_stock/06-98419 -> /api/items_stock/
     """
     parts = endpoint.strip().split("/")
     if len(parts) <= 3:
-        # No tiene un resource variable → se queda igual
         return endpoint if endpoint.endswith("/") else endpoint + "/"
-
-    # Quitar el último segmento variable
     base = "/".join(parts[:-1]) + "/"
     return base
 
 
+def extract_date_from_filename(filename: str):
+    """Extracts YYYY-MM-DD date from a filename like 'auditoria_2025-11-28.csv'."""
+    match = re.search(r"(\d{4}-\d{2}-\d{2})", filename)
+    return match.group(1) if match else None
+
+
 def main():
     parser = argparse.ArgumentParser(
-        description="Agrupa y cuenta los endpoints de un archivo de auditoría."
+        description="Consolidates endpoint counts from all audit files in a directory."
     )
     parser.add_argument(
-        "--input-file",
+        "--input-dir",
         required=True,
-        help="Ruta al archivo de auditoría CSV (ej: audits/auditoria_2025-11-28.csv)",
+        help="Path to the directory containing audit CSV files (e.g., audits/auditoria_main_2025-11-28).",
     )
     args = parser.parse_args()
 
-    counter = Counter()
+    if not os.path.isdir(args.input_dir):
+        print(f"Error: Provided path '{args.input_dir}' is not a valid directory.")
+        return
 
-    print(f"🔍 Procesando archivo: {args.input_file}")
+    all_rows = []
+    print(f"📂 Scanning directory: {args.input_dir}")
 
-    # Leer CSV
-    with open(args.input_file, "r", encoding="utf-8") as f:
-        reader = csv.reader(f)
-        next(reader, None)  # Saltar la cabecera
-        for row in reader:
-            if len(row) != 2:
+    for filename in sorted(os.listdir(args.input_dir)):
+        # Process only raw audit CSV files
+        if filename.startswith("auditoria_") and filename.endswith(".csv"):
+            file_date = extract_date_from_filename(filename)
+            if not file_date:
+                print(f"  -> Warning: Could not extract date from '{filename}'. Skipping.")
                 continue
 
-            endpoint, count_str = row
+            print(f"  -> Processing file: {filename} for date {file_date}")
+            full_path = os.path.join(args.input_dir, filename)
+            
             try:
-                count = int(count_str)
-            except ValueError:
-                continue  # ignorar filas inválidas
+                with open(full_path, "r", encoding="utf-8") as f:
+                    reader = csv.reader(f)
+                    next(reader, None)  # Skip header
+                    
+                    # Group within the file first
+                    file_counter = Counter()
+                    for row in reader:
+                        if len(row) != 2:
+                            continue
+                        endpoint, count_str = row
+                        try:
+                            count = int(count_str)
+                            base_endpoint = normalize_endpoint(endpoint)
+                            file_counter[base_endpoint] += count
+                        except ValueError:
+                            continue
+                    
+                    # Add file's grouped data to the main list
+                    for endpoint, total in file_counter.items():
+                        all_rows.append([endpoint, total, file_date])
 
-            base_endpoint = normalize_endpoint(endpoint)
-            counter[base_endpoint] += count
+            except Exception as e:
+                print(f"    -> ERROR: Failed to process file: {e}. Skipping.")
 
-    # Guardar resultado
-    with open(OUTPUT_FILE, "w", encoding="utf-8", newline="") as f:
+    if not all_rows:
+        print("No data was processed. No output file will be generated.")
+        return
+
+    # Determine output file path
+    # Saves the consolidated file in the *same* directory as the input directory
+    # e.g., if input is audits/run1/, output is audits/consolidado_run1.csv
+    input_dir_name = os.path.basename(os.path.normpath(args.input_dir))
+    parent_dir = os.path.dirname(os.path.normpath(args.input_dir))
+    output_filename = os.path.join(parent_dir, f"consolidado_{input_dir_name}.csv")
+
+    # Save consolidated result
+    with open(output_filename, "w", encoding="utf-8", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(["endpoint_base", "total"])
+        writer.writerow(["endpoint_base", "total", "date"])
+        writer.writerows(sorted(all_rows, key=lambda x: (x[2], x[0]))) # Sort by date, then endpoint
 
-        for endpoint, total in counter.most_common():
-            writer.writerow([endpoint, total])
-
-    print(f"📁 Archivo generado: {OUTPUT_FILE}")
+    print(f"\n✅ Consolidated file generated: {output_filename}")
 
 
 if __name__ == "__main__":
