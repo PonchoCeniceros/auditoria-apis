@@ -1,8 +1,8 @@
 import csv
+import argparse
 from collections import Counter
 from pathlib import Path
 
-INPUT_FILE = "auditoria_2025-11-26.csv"
 OUTPUT_FILE = "agrupado.csv"
 
 
@@ -22,20 +22,31 @@ def normalize_endpoint(endpoint: str) -> str:
 
 
 def main():
+    parser = argparse.ArgumentParser(
+        description="Agrupa y cuenta los endpoints de un archivo de auditoría."
+    )
+    parser.add_argument(
+        "--input-file",
+        required=True,
+        help="Ruta al archivo de auditoría CSV (ej: audits/auditoria_2025-11-28.csv)",
+    )
+    args = parser.parse_args()
+
     counter = Counter()
 
-    print(f"🔍 Procesando archivo: {INPUT_FILE}")
+    print(f"🔍 Procesando archivo: {args.input_file}")
 
     # Leer CSV
-    with open(INPUT_FILE, "r", encoding="utf-8") as f:
+    with open(args.input_file, "r", encoding="utf-8") as f:
         reader = csv.reader(f)
+        next(reader, None)  # Saltar la cabecera
         for row in reader:
             if len(row) != 2:
                 continue
 
-            endpoint, count = row
+            endpoint, count_str = row
             try:
-                count = int(count)
+                count = int(count_str)
             except ValueError:
                 continue  # ignorar filas inválidas
 

@@ -2,11 +2,11 @@ import os
 import re
 import csv
 import gzip
+import argparse
 from datetime import datetime
 from collections import Counter
 
 LOG_PATH = "/var/log/nginx"
-ROUTES_FILE = "./routes/main.txt"  # Archivo externo con prefijos
 
 # Regex para extraer método y endpoint
 request_regex = re.compile(r'"(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS) ([^ ]+)')
@@ -34,14 +34,14 @@ def extract_endpoint(line):
     return path.split("?")[0]  # quitar parámetros
 
 
-def load_prefixes():
-    """Carga prefijos desde el archivo routes_list.txt"""
+def load_prefixes(routes_file):
+    """Carga prefijos desde un archivo de rutas"""
     prefixes = []
-    if not os.path.exists(ROUTES_FILE):
-        print(f"ERROR: No se encontró el archivo {ROUTES_FILE}")
+    if not os.path.exists(routes_file):
+        print(f"ERROR: No se encontró el archivo {routes_file}")
         exit(1)
 
-    with open(ROUTES_FILE, "r", encoding="utf-8") as f:
+    with open(routes_file, "r", encoding="utf-8") as f:
         for line in f:
             clean = line.strip()
             if clean:
@@ -56,7 +56,17 @@ def matches_prefix(endpoint, prefixes):
 
 
 def main():
-    prefixes = load_prefixes()
+    parser = argparse.ArgumentParser(
+        description="Analiza logs de Nginx y cuenta hits a endpoints específicos."
+    )
+    parser.add_argument(
+        "--routes-file",
+        default="./routes/main.txt",
+        help="Archivo con la lista de prefijos de rutas a auditar.",
+    )
+    args = parser.parse_args()
+
+    prefixes = load_prefixes(args.routes_file)
     counter = Counter()
 
     for filename in sorted(os.listdir(LOG_PATH)):
@@ -70,25 +80,17 @@ def main():
 
     # Crear archivo con fecha
     today = datetime.now().strftime("%Y-%m-%d")
-    output_filename = f"auditoria_{today}.csv"
+    output_filename = os.path.join("audits", f"auditoria_{today}.csv")  # Modified line
 
-    total_hits = sum(counter.values())
+    # Ensure the 'audits' directory exists
+    os.makedirs("audits", exist_ok=True)  # Added line
 
-    with open(output_filename, "w", encoding="utf-8") as file:
+    with open(output_filename, "w", encoding="utf-8", newline="") as file:
         writer = csv.writer(file)
         writer.writerow(["endpoint", "count"])
 
         for endpoint, count in counter.most_common():
             writer.writerow([endpoint, count])
-
-    """
-    with open(output_filename, "w", encoding="utf-8") as file:
-        file.write("===== Frecuencia de endpoints seleccionados =====\n\n")
-        file.write(f"Total de hits filtrados: {total_hits}\n\n")
-
-        for endpoint, count in counter.most_common():
-            file.write(f"{endpoint:50} {count}\n")
-    """
 
     print(f"\nReporte generado: {output_filename}\n")
 
