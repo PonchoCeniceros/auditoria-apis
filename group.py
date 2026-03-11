@@ -1,7 +1,7 @@
 import csv
 import argparse
 import re
-from collections import Counter
+from collections import defaultdict
 import os
 
 
@@ -25,7 +25,7 @@ def extract_date_from_filename(filename: str):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Consolidates endpoint counts from all audit files in a directory."
+        description="Consolidates endpoint performance data from all audit files in a directory."
     )
     parser.add_argument(
         "--input-dir",
@@ -53,26 +53,45 @@ def main():
             full_path = os.path.join(args.input_dir, filename)
             
             try:
+                # Data structure for the current file's aggregation
+                file_aggregator = defaultdict(lambda: {'total_hits': 0, 'sum_duration': 0.0, 'sum_backend': 0.0})
+
                 with open(full_path, "r", encoding="utf-8") as f:
                     reader = csv.reader(f)
-                    next(reader, None)  # Skip header
-                    
-                    # Group within the file first
-                    file_counter = Counter()
+                    header = next(reader, None)
+                    # Expecting header: endpoint, count, avg_total_duration, avg_backend_time
+                    if not header or len(header) != 4:
+                         print(f"    -> Warning: Unexpected header '{header}'. Skipping.")
+                         continue
+
                     for row in reader:
-                        if len(row) != 2:
+                        if len(row) != 4:
                             continue
-                        endpoint, count_str = row
+                        
+                        endpoint, count_str, avg_duration_str, avg_backend_str = row
                         try:
                             count = int(count_str)
+                            avg_duration = float(avg_duration_str)
+                            avg_backend = float(avg_backend_str)
+                            
                             base_endpoint = normalize_endpoint(endpoint)
-                            file_counter[base_endpoint] += count
+                            
+                            # Update stats for the base_endpoint
+                            stats = file_aggregator[base_endpoint]
+                            stats['total_hits'] += count
+                            # Calculate total times by multiplying average by count
+                            stats['sum_duration'] += avg_duration * count
+                            stats['sum_backend'] += avg_backend * count
+
                         except ValueError:
                             continue
-                    
-                    # Add file's grouped data to the main list
-                    for endpoint, total in file_counter.items():
-                        all_rows.append([endpoint, total, file_date])
+                
+                # After processing the file, calculate averages and add to the main list
+                for base_endpoint, stats in file_aggregator.items():
+                    total_hits = stats['total_hits']
+                    avg_total_duration = round(stats['sum_duration'] / total_hits, 3) if total_hits > 0 else 0
+                    avg_backend_time = round(stats['sum_backend'] / total_hits, 3) if total_hits > 0 else 0
+                    all_rows.append([base_endpoint, total_hits, avg_total_duration, avg_backend_time, file_date])
 
             except Exception as e:
                 print(f"    -> ERROR: Failed to process file: {e}. Skipping.")
@@ -82,8 +101,6 @@ def main():
         return
 
     # Determine output file path
-    # Saves the consolidated file in the *same* directory as the input directory
-    # e.g., if input is audits/run1/, output is audits/consolidado_run1.csv
     input_dir_name = os.path.basename(os.path.normpath(args.input_dir))
     parent_dir = os.path.dirname(os.path.normpath(args.input_dir))
     output_filename = os.path.join(parent_dir, f"consolidado_{input_dir_name}.csv")
@@ -91,10 +108,11 @@ def main():
     # Save consolidated result
     with open(output_filename, "w", encoding="utf-8", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(["endpoint_base", "total", "date"])
-        writer.writerows(sorted(all_rows, key=lambda x: (x[2], x[0]))) # Sort by date, then endpoint
+        writer.writerow(["endpoint_base", "total_hits", "avg_total_duration", "avg_backend_time", "date"])
+        # Sort by date, then by total hits descending
+        writer.writerows(sorted(all_rows, key=lambda x: (x[4], -x[1])))
 
-    print(f"\n✅ Consolidated file generated: {output_filename}")
+    print(f"\n✅ Consolidated performance file generated: {output_filename}")
 
 
 if __name__ == "__main__":
