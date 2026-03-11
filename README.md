@@ -19,6 +19,8 @@ python3 audit.py
 python3 audit.py --routes-file ./routes/hana.txt
 python3 audit.py --routes-file ./routes/shopify.txt
 python3 audit.py --routes-file ./routes/shopify_hana.txt
+python3 audit.py --routes-file ./routes/ftapi.txt
+python3 audit.py --routes-file ./routes/ftapi_hana.txt
 ```
 
 ### Consolidate Results
@@ -35,6 +37,8 @@ python3 group.py --input-dir audits/auditoria_main_2025-12-02
 | `routes/hana.txt` | HANA-specific endpoints |
 | `routes/shopify.txt` | Shopify API endpoints |
 | `routes/shopify_hana.txt` | Shopify HANA endpoints |
+| `routes/ftapi.txt` | FT-API Node.js endpoints |
+| `routes/ftapi_hana.txt` | FT-API HANA endpoints |
 
 ## Output
 

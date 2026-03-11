@@ -1,0 +1,10 @@
+/api/hana/code_concat
+/api/hana/customer_list
+/api/hana/general_insert
+/api/hana/general_query
+/api/hana/item_list
+/api/hana/layouts
+/api/hana/order_history
+/api/hana/sub_items_list
+/api/hana/trkd_access
+/api/hana/unique_values
