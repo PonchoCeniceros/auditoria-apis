@@ -9,17 +9,17 @@ from collections import defaultdict
 
 # Set locale for parsing month names
 try:
-    locale.setlocale(locale.LC_TIME, 'en_US.UTF-8')
+    locale.setlocale(locale.LC_TIME, "en_US.UTF-8")
 except locale.Error:
     print("Warning: Locale 'en_US.UTF-8' not available, date parsing may fail.")
 
 LOG_PATH = "/var/log/nginx"
 
-# Regex to extract date, method, path, total duration, and backend time
+# Regex to extract date, method, path, and optional duration/backend_time
 log_data_regex = re.compile(
-    r'.*?\[(?P<date>\d{2}/\w{3}/\d{4}):[^\s]+ .*?\] '
+    r".*?\[(?P<date>\d{2}/\w{3}/\d{4}):[^\s]+ .*?\] "
     r'"(?P<method>\w+) (?P<path>[^ ]+).*?" \d+ \d+ '
-    r'(?P<duration>[\d.]+) (?P<backend_time>[\d.]+)'
+    r"(?P<duration>[\d.]+)? ?(?P<backend_time>[\d.]+)?"
 )
 
 
@@ -41,10 +41,10 @@ def extract_log_data(line):
 
     data = match.groupdict()
     try:
-        date_obj = datetime.strptime(data['date'], "%d/%b/%Y").date()
-        endpoint = data['path'].split("?")[0]
-        duration = float(data['duration'])
-        backend_time = float(data['backend_time'])
+        date_obj = datetime.strptime(data["date"], "%d/%b/%Y").date()
+        endpoint = data["path"].split("?")[0]
+        duration = float(data["duration"]) if data["duration"] else 0.0
+        backend_time = float(data["backend_time"]) if data["backend_time"] else 0.0
         return date_obj, endpoint, duration, backend_time
     except (ValueError, KeyError):
         return None
@@ -88,7 +88,11 @@ def main():
 
     prefixes = load_prefixes(args.routes_file)
     # New data structure to hold count and summed times
-    daily_data = defaultdict(lambda: defaultdict(lambda: {'count': 0, 'total_duration': 0.0, 'backend_time': 0.0}))
+    daily_data = defaultdict(
+        lambda: defaultdict(
+            lambda: {"count": 0, "total_duration": 0.0, "backend_time": 0.0}
+        )
+    )
 
     print("🔍 Processing log files...")
     for filename in sorted(os.listdir(LOG_PATH)):
@@ -100,9 +104,9 @@ def main():
                     log_date, endpoint, duration, backend_time = result
                     if endpoint and matches_prefix(endpoint, prefixes):
                         stats = daily_data[log_date][endpoint]
-                        stats['count'] += 1
-                        stats['total_duration'] += duration
-                        stats['backend_time'] += backend_time
+                        stats["count"] += 1
+                        stats["total_duration"] += duration
+                        stats["backend_time"] += backend_time
 
     if not daily_data:
         print("No matching log entries found.")
@@ -111,29 +115,31 @@ def main():
     today_str = datetime.now().strftime("%Y-%m-%d")
     routes_file_base = os.path.splitext(os.path.basename(args.routes_file))[0]
     dir_base_name = f"auditoria_{routes_file_base}_{today_str}"
-    
+
     output_dir = get_unique_dir(dir_base_name, parent_dir="audits")
     os.makedirs(output_dir)
     print(f"📁 Report directory created: {output_dir}")
 
     for log_date, endpoints in sorted(daily_data.items()):
-        date_str = log_date.strftime('%Y-%m-%d')
+        date_str = log_date.strftime("%Y-%m-%d")
         output_filename = os.path.join(output_dir, f"auditoria_{date_str}.csv")
-        
+
         # Prepare data for sorting and writing
         output_rows = []
         for endpoint, stats in endpoints.items():
-            count = stats['count']
-            avg_duration = stats['total_duration'] / count if count > 0 else 0
-            avg_backend_time = stats['backend_time'] / count if count > 0 else 0
+            count = stats["count"]
+            avg_duration = stats["total_duration"] / count if count > 0 else 0
+            avg_backend_time = stats["backend_time"] / count if count > 0 else 0
             output_rows.append([endpoint, count, avg_duration, avg_backend_time])
-        
+
         # Sort by count descending
         output_rows.sort(key=lambda x: x[1], reverse=True)
 
         with open(output_filename, "w", encoding="utf-8", newline="") as file:
             writer = csv.writer(file)
-            writer.writerow(["endpoint", "count", "avg_total_duration", "avg_backend_time"])
+            writer.writerow(
+                ["endpoint", "count", "avg_total_duration", "avg_backend_time"]
+            )
             writer.writerows(output_rows)
 
         print(f"  -> Daily performance report generated: {output_filename}")
