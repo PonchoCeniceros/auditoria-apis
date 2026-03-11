@@ -1,0 +1,17 @@
+/api/index
+/api/docs
+/api/autoback
+/api/zebra
+/api/hana
+/api/item
+/api/pedimento
+/api/statistics
+/api/sales
+/api/cycle_counts
+/api/production_orders
+/api/invoices
+/api/incoming_payments
+/api/shipments
+/api/sb/order_drafts
+/api/sb/general
+/api/account_statements
