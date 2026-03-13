@@ -15,9 +15,9 @@ except locale.Error:
 
 LOG_PATH = "/var/log/nginx"
 
-# Regex to extract date, method, path, and optional duration/backend_time
+# Regex to extract date, time, method, path, and optional duration/backend_time
 log_data_regex = re.compile(
-    r".*?\[(?P<date>\d{2}/\w{3}/\d{4}):[^\s]+ .*?\] "
+    r".*?\[(?P<date>\d{2}/\w{3}/\d{4}):(?P<time>\d{2}:\d{2}:\d{2}) .*?\] "
     r'"(?P<method>\w+) (?P<path>[^ ]+).*?" \d+ \d+ '
     r"(?P<duration>[\d.]+)? ?(?P<backend_time>[\d.]+)?"
 )
@@ -34,7 +34,7 @@ def read_log_file(file_path):
 
 
 def extract_log_data(line):
-    """Extracts date, endpoint, and performance metrics from a log line."""
+    """Extracts date, time, endpoint, and performance metrics from a log line."""
     match = log_data_regex.match(line)
     if not match:
         return None
@@ -42,10 +42,12 @@ def extract_log_data(line):
     data = match.groupdict()
     try:
         date_obj = datetime.strptime(data["date"], "%d/%b/%Y").date()
+        time_str = data["time"]
+        hour = int(time_str.split(":")[0])
         endpoint = data["path"].split("?")[0]
         duration = float(data["duration"]) if data["duration"] else 0.0
         backend_time = float(data["backend_time"]) if data["backend_time"] else 0.0
-        return date_obj, endpoint, duration, backend_time
+        return date_obj, hour, endpoint, duration, backend_time
     except (ValueError, KeyError):
         return None
 
@@ -93,6 +95,8 @@ def main():
             lambda: {"count": 0, "total_duration": 0.0, "backend_time": 0.0}
         )
     )
+    # New data structure for hourly stats: (date, hour) -> endpoint -> count
+    hourly_data = defaultdict(lambda: defaultdict(int))
 
     print("🔍 Processing log files...")
     for filename in sorted(os.listdir(LOG_PATH)):
@@ -101,12 +105,13 @@ def main():
             for line in read_log_file(full_path):
                 result = extract_log_data(line)
                 if result:
-                    log_date, endpoint, duration, backend_time = result
+                    log_date, hour, endpoint, duration, backend_time = result
                     if endpoint and matches_prefix(endpoint, prefixes):
                         stats = daily_data[log_date][endpoint]
                         stats["count"] += 1
                         stats["total_duration"] += duration
                         stats["backend_time"] += backend_time
+                        hourly_data[(log_date, hour)][endpoint] += 1
 
     if not daily_data:
         print("No matching log entries found.")
@@ -143,6 +148,22 @@ def main():
             writer.writerows(output_rows)
 
         print(f"  -> Daily performance report generated: {output_filename}")
+
+    # Generate hourly report CSV
+    hourly_filename = os.path.join(output_dir, "auditoria_por_hora.csv")
+    hourly_rows = []
+    for (log_date, hour), endpoints in sorted(hourly_data.items()):
+        day_name = log_date.strftime("%A %d %B")
+        day_date = log_date.strftime("%Y-%m-%d")
+        for endpoint, count in sorted(endpoints.items(), key=lambda x: -x[1]):
+            hourly_rows.append([endpoint, day_date, day_name, f"{hour:02d}:00", count])
+
+    with open(hourly_filename, "w", encoding="utf-8", newline="") as file:
+        writer = csv.writer(file)
+        writer.writerow(["endpoint", "date", "day", "hour", "count"])
+        writer.writerows(hourly_rows)
+
+    print(f"  -> Hourly performance report generated: {hourly_filename}")
 
     print("\n✅ Process completed successfully.")
 
